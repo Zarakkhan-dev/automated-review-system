@@ -356,7 +356,7 @@ const handleSendMessage = async (message: string) => {
                 Start a conversation
               </h1>
               <p className="max-w-md text-gray-500">
-                Ask anything or share your thoughts. I'm here to help!
+                Ask anything or share your thoughts. I&apos;m here to help!
               </p>
             </div>
           ) : (
