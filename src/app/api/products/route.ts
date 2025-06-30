@@ -36,6 +36,7 @@ export async function POST(request: Request) {
     const price = parseFloat(formData.get('price') as string);
     const imageFile = formData.get('image') as File;
 
+
     if (!name || !description || !price || !imageFile) {
       return NextResponse.json(
         { error: 'Missing required fields' },

@@ -1,5 +1,4 @@
 "use client";
-import Image from "next/image";
 import Link from "next/link";
 
 const Footer = () => {
@@ -143,7 +142,7 @@ const Footer = () => {
           <p className="text-body-color text-center text-base dark:text-white">
             © {new Date().getFullYear()} All rights reserved by{" "}
             <span className="text-primary font-semibold">
-              Devverse IT Solution
+              Mahad Saqib
             </span>
             . Built with ❤️ using{" "}
             <a

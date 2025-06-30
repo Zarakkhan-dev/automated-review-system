@@ -22,7 +22,9 @@ const reviewSchema = new Schema<IReview>(
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+     required: function () {
+    return !this.isAI; 
+  },
     },
     rating: {
       type: Number,

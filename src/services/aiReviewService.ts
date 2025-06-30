@@ -1,117 +1,160 @@
-import { pipeline } from '@xenova/transformers';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const GEMINI_MODEL_NAME = "gemini-2.0-flash";
 
 class AIReviewService {
-  private static sentimentAnalysis: any;
-  private static textGeneration: any;
+  private static geminiModel: any;
 
   static async initialize() {
-    if (!this.sentimentAnalysis) {
-      this.sentimentAnalysis = await pipeline(
-        'text-classification',
-        'Xenova/distilbert-base-uncased-finetuned-sst-2-english'
-      );
-    }
-    if (!this.textGeneration) {
-      this.textGeneration = await pipeline(
-        'text-generation',
-        'Xenova/distilgpt2'
-      );
-    }
-  }
-
-  static async analyzeSentiment(text: string): Promise<{score: number, rating: number}> {
-    await this.initialize();
-    
-    try {
-      const sentimentResult = await this.sentimentAnalysis(text);
-      const baseScore = sentimentResult[0].label === 'POSITIVE' 
-        ? sentimentResult[0].score 
-        : -sentimentResult[0].score;
-      
-      const intensityWords = {
-        strongPositive: ['excellent', 'amazing', 'perfect', 'love', 'fantastic', 'outstanding'],
-        moderatePositive: ['good', 'great', 'nice', 'happy', 'satisfied'],
-        weakPositive: ['okay', 'decent', 'acceptable', 'fine'],
-        weakNegative: ['disappointing', 'mediocre', 'subpar', 'lacking'],
-        moderateNegative: ['bad', 'poor', 'unhappy', 'frustrated'],
-        strongNegative: ['terrible', 'awful', 'horrible', 'hate', 'waste']
-      };
-
-      let intensityScore = 0;
-      const lowerText = text.toLowerCase();
-      
-      if (intensityWords.strongPositive.some(w => lowerText.includes(w))) intensityScore = 1;
-      else if (intensityWords.moderatePositive.some(w => lowerText.includes(w))) intensityScore = 0.6;
-      else if (intensityWords.weakPositive.some(w => lowerText.includes(w))) intensityScore = 0.3;
-      else if (intensityWords.weakNegative.some(w => lowerText.includes(w))) intensityScore = -0.3;
-      else if (intensityWords.moderateNegative.some(w => lowerText.includes(w))) intensityScore = -0.6;
-      else if (intensityWords.strongNegative.some(w => lowerText.includes(w))) intensityScore = -1;
-
-      const combinedScore = (baseScore * 0.7) + (intensityScore * 0.3);
-      
-      const ratingMap = [
-        { min: -1, max: -0.6, rating: 1 },
-        { min: -0.6, max: -0.2, rating: 2 },
-        { min: -0.2, max: 0.2, rating: 3 },
-        { min: 0.2, max: 0.6, rating: 4 },
-        { min: 0.6, max: 1, rating: 5 }
-      ];
-      
-      const finalRating = ratingMap.find(
-        range => combinedScore >= range.min && combinedScore <= range.max
-      )?.rating || 3;
-
-      return { 
-        score: combinedScore,
-        rating: finalRating
-      };
-    } catch (error) {
-      console.error('Sentiment analysis error:', error);
-      return { score: 0, rating: 3 }; 
-    }
-  }
-
-  static async generateAIReview(productName: string, reviews: string[] = []): Promise<{title: string, content: string}> {
-    await this.initialize();
-    
-    try {
-      let context = '';
-      if (reviews.length > 0) {
-        const sentiments = await Promise.all(reviews.map(r => this.analyzeSentiment(r)));
-        const avgScore = sentiments.reduce((a, b) => a + b.score, 0) / sentiments.length;
-        
-        const sentimentDescription = avgScore > 0.6 ? 'overwhelmingly positive' :
-                                   avgScore > 0.2 ? 'generally positive' :
-                                   avgScore > -0.2 ? 'mixed' :
-                                   avgScore > -0.6 ? 'somewhat negative' : 'very negative';
-        
-        context = `Based on customer feedback that is ${sentimentDescription}, `;
-      }
-
-      const prompt = `Product: ${productName}\n${context}Generate a concise, balanced product review that highlights key aspects:\n`;
-      
-      const output = await this.textGeneration(prompt, {
-        max_new_tokens: 150,
-        temperature: 0.7,
-        repetition_penalty: 1.3,
-        do_sample: true,
+    if (!this.geminiModel) {
+      this.geminiModel = await genAI.getGenerativeModel({
+        model: GEMINI_MODEL_NAME,
       });
+    }
+  }
 
-      let content = output[0].generated_text.replace(prompt, '').trim();
+  static async analyzeSentiment(
+    text: string,
+  ): Promise<{ score: number; rating: number }> {
+    await this.initialize();
 
-      content = content.split('\n')[0]; 
-      const title = content.split('.')[0].substring(0, 80) + (content.includes('.') ? '...' : '');
-
-      return { 
-        title: title || 'Product Review',
-        content: content || 'This product has received positive feedback from customers.'
+    try {
+      // First try to get rating directly from Gemini
+      const rating = await AIReviewService.getRatingFromGemini(text);
+      
+      // Convert rating to score (0-1 scale)
+      const score = (rating - 1) / 4; // Maps 1-5 to 0-1
+      
+      return {
+        score: parseFloat(score.toFixed(4)),
+        rating: rating,
       };
     } catch (error) {
-      console.error('AI review generation error:', error);
+      console.error("Sentiment analysis error:", error);
+      return { score: 0.5, rating: 3 }; // Return neutral if error occurs
+    }
+  }
+
+  static async generateAIReview(
+    productName: string,
+    reviews: string[] = [],
+    score: number = 0,
+  ): Promise<{ title: string; content: string }> {
+    await this.initialize();
+
+    try {
+      const sentimentDescription =
+        score >= 0.7
+          ? "overwhelmingly positive"
+          : score >= 0.4
+            ? "generally positive"
+            : score >= 0.1
+              ? "mixed"
+              : score >= -0.2
+                ? "somewhat negative"
+                : "very negative";
+
+      const summarizedComments = reviews
+        .slice(0, 5)
+        .map((r) => `• ${r}`)
+        .join("\n");
+
+      const prompt = `
+Product: "${productName}"
+Average Sentiment Score: ${score.toFixed(2)} (${sentimentDescription})
+
+Customer Comments:
+${summarizedComments || "(No valid reviews provided)"}
+
+Summary:
+Write a 3-4 line honest review summary based ONLY on the comments above. Highlight the overall experience. No fiction or exaggeration.
+
+Title:
+Write a 3-5 word title that fits the tone.
+`.trim();
+
+      const result = await this.geminiModel.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+
+      // Extract title and summary
+      const titleMatch = text.match(/Title:\s*(.+)/i);
+      const summaryMatch = text.match(/Summary:\s*([\s\S]+)/i);
+
       return {
-        title: 'Product Overview',
-        content: 'Our AI analysis of this product is currently unavailable. Please check back later.'
+        title: titleMatch?.[1]?.trim() || "AI Review Summary",
+        content:
+          summaryMatch?.[1]?.trim() || "This product received mixed feedback.",
       };
+    } catch (error) {
+      console.error("Gemini AI review generation error:", error);
+      return {
+        title: "Product Overview",
+        content: "AI analysis currently unavailable. Please try again later.",
+      };
+    }
+  }
+
+  static async generateFlashCommentByScore(score: number): Promise<string> {
+    await this.initialize();
+
+    const mood =
+      score >= 0.7
+        ? "extremely positive"
+        : score >= 0.4
+          ? "generally positive"
+          : score >= 0.1
+            ? "mixed"
+            : score >= -0.3
+              ? "somewhat negative"
+              : "strongly negative";
+
+    const prompt = `
+The overall customer sentiment is "${mood}".
+
+Write a realistic and brief 2–3 line product summary that reflects this tone. Avoid exaggeration and remain factual.
+`.trim();
+
+    try {
+      const result = await this.geminiModel.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text().trim();
+
+      return text || "No comment available.";
+    } catch (error) {
+      console.error("Gemini flash comment error:", error);
+      return "No comment available.";
+    }
+  }
+
+  static async getRatingFromGemini(text: string): Promise<number> {
+    await this.initialize();
+    try {
+      const prompt = `
+Analyze the following customer review and determine the sentiment. 
+Provide a rating between 1 to 5 where:
+1 = Very negative
+2 = Negative
+3 = Neutral
+4 = Positive
+5 = Very positive
+
+Review:
+"${text}"
+
+Return ONLY the number without any additional text or explanation.
+`.trim();
+
+      const result = await this.geminiModel.generateContent(prompt);
+      const response = await result.response;
+      const raw = response.text().trim();
+
+      const num = parseInt(raw, 10);
+      return Number.isNaN(num) ? 3 : Math.min(5, Math.max(1, num));
+    } catch (err) {
+      console.error("Gemini rating error:", err);
+      return 3;
     }
   }
 }
