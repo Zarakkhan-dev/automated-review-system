@@ -20,11 +20,8 @@ class AIReviewService {
     await this.initialize();
 
     try {
-      // First try to get rating directly from Gemini
       const rating = await AIReviewService.getRatingFromGemini(text);
-      
-      // Convert rating to score (0-1 scale)
-      const score = (rating - 1) / 4; // Maps 1-5 to 0-1
+      const score = (rating - 1) / 4;
       
       return {
         score: parseFloat(score.toFixed(4)),
@@ -32,7 +29,7 @@ class AIReviewService {
       };
     } catch (error) {
       console.error("Sentiment analysis error:", error);
-      return { score: 0.5, rating: 3 }; // Return neutral if error occurs
+      return { score: 0.5, rating: 3 };
     }
   }
 
@@ -68,7 +65,10 @@ Customer Comments:
 ${summarizedComments || "(No valid reviews provided)"}
 
 Summary:
-Write a 3-4 line honest review summary based ONLY on the comments above. Highlight the overall experience. No fiction or exaggeration.
+Write a clear, 3–4 line summary based only on the customer comments.
+   - Do NOT use placeholders like [mention something].
+   - If specific benefits are not mentioned, use more general, truthful phrasing.
+   - Avoid generic buzzwords like "satisfactory" or "solid choice".
 
 Title:
 Write a 3-5 word title that fits the tone.
@@ -78,7 +78,6 @@ Write a 3-5 word title that fits the tone.
       const response = await result.response;
       const text = response.text();
 
-      // Extract title and summary
       const titleMatch = text.match(/Title:\s*(.+)/i);
       const summaryMatch = text.match(/Summary:\s*([\s\S]+)/i);
 
@@ -157,6 +156,34 @@ Return ONLY the number without any additional text or explanation.
       return 3;
     }
   }
+
+  static async generateReplyForReview(reviewText: string, rating: number): Promise<string> {
+    await this.initialize();
+    
+    try {
+      const tone = rating >= 4 ? "positive and appreciative" 
+                : rating >= 2 ? "professional and understanding" 
+                : "apologetic and concerned";
+      
+      const prompt = `
+A customer left this review with a rating of ${rating} stars:
+"${reviewText}"
+
+Generate a short (1-2 sentence) ${tone} reply from the business. 
+For positive reviews, say thank you. 
+For negative reviews, acknowledge the issue and thank them for feedback.
+Keep it concise and professional.
+`.trim();
+
+      const result = await this.geminiModel.generateContent(prompt);
+      const response = await result.response;
+      return response.text().trim();
+    } catch (error) {
+      console.error("Error generating reply:", error);
+      return rating >= 3 ? "Thank you for your review!" : "Thank you for your feedback.";
+    }
+  }
+
 }
 
 export default AIReviewService;

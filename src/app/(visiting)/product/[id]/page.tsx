@@ -17,6 +17,16 @@ interface Product {
   updatedAt?: string;
 }
 
+interface ReviewReply {
+  _id: string;
+  userId: {
+    _id: string;
+    name: string;
+  };
+  comment: string;
+  createdAt: string;
+}
+
 interface Review {
   _id: string;
   productId: string;
@@ -29,6 +39,7 @@ interface Review {
   isAI?: boolean;
   aiTitle?: string;
   createdAt: string;
+  replies?: ReviewReply[];
 }
 
 interface ReviewsResponse {
@@ -44,6 +55,8 @@ export default function ProductPage({ params }: { params: { id: string } }) {
   const [reviews, setReviews] = useState<ReviewsResponse>({ ai: null, users: [] });
   const [product, setProduct] = useState<Product | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
   const { data: userData } = useFetchMeQuery();
   const router = useRouter();
 
@@ -113,7 +126,7 @@ export default function ProductPage({ params }: { params: { id: string } }) {
         throw new Error(result.error || "Failed to submit review");
       }
 
-      await fetchProductData(); // Refresh product and reviews
+      await fetchProductData(); 
 
       setRating(0);
       setComment("");
@@ -124,6 +137,37 @@ export default function ProductPage({ params }: { params: { id: string } }) {
       toast.error(err.message || "Failed to submit review", { position: "top-right", autoClose: 3000 });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleReplySubmit = async (reviewId: string) => {
+    if (!replyText.trim() || !userData?.user?.userId) return;
+
+    try {
+      const response = await fetch('/api/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reviewId,
+          userId: userData.user.userId,
+          comment: replyText,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Failed to submit reply');
+      }
+
+      // Refresh the reviews
+      await fetchProductData();
+      setReplyingTo(null);
+      setReplyText('');
+      toast.success('Reply submitted successfully!');
+    } catch (error: any) {
+      console.error('Reply submission error:', error);
+      toast.error(error.message || 'Failed to submit reply');
     }
   };
 
@@ -206,6 +250,59 @@ export default function ProductPage({ params }: { params: { id: string } }) {
                   <span className="text-sm text-gray-500">{formatDate(review.createdAt)}</span>
                 </div>
                 <p className="text-gray-700">{review.comment}</p>
+                
+                {/* Replies section */}
+                {review.replies?.length > 0 && (
+                  <div className="mt-4 pl-6 border-l-2 border-gray-200">
+                    {review.replies.map((reply) => (
+                      <div key={reply._id} className="mb-3">
+                        <div className="flex justify-between">
+                          <p className="font-medium text-sm">{reply.userId.name}</p>
+                          <span className="text-xs text-gray-500">{formatDate(reply.createdAt)}</span>
+                        </div>
+                        <p className="text-gray-600 text-sm">{reply.comment}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Reply form */}
+                {userData?.user && (
+                  <div className="mt-4">
+                    {replyingTo === review._id ? (
+                      <div className="flex flex-col">
+                        <textarea
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
+                          placeholder="Write your reply..."
+                          className="w-full rounded-md border border-gray-300 p-2 text-sm"
+                          rows={2}
+                        />
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => handleReplySubmit(review._id)}
+                            className="rounded bg-blue-600 px-3 py-1 text-sm text-white"
+                          >
+                            Submit
+                          </button>
+                          <button
+                            onClick={() => setReplyingTo(null)}
+                            className="rounded bg-gray-200 px-3 py-1 text-sm"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setReplyingTo(review._id)}
+                        className="text-sm text-blue-600 hover:underline"
+                      >
+                        Reply
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -217,19 +314,6 @@ export default function ProductPage({ params }: { params: { id: string } }) {
           <h3 className="mb-4 text-xl font-semibold">Write a Review</h3>
           {error && <div className="mb-4 rounded bg-red-100 p-3 text-red-700">{error}</div>}
           <form onSubmit={handleSubmit}>
-            {/* <div className="mb-4">
-              <label className="mb-2 block text-gray-700">Your Rating</label>
-              <div className="flex space-x-1">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button key={star} type="button" onClick={() => setRating(star)} className="focus:outline-none">
-                    <svg className={`h-8 w-8 ${rating >= star ? "text-yellow-400" : "text-gray-300"}`} fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                    </svg>
-                  </button>
-                ))}
-              </div>
-              <p className="mt-1 text-sm text-gray-500">{rating ? `You selected ${rating} star${rating !== 1 ? 's' : ''}` : 'Select a rating'}</p>
-            </div> */}
             <div className="mb-4">
               <label htmlFor="comment" className="mb-2 block text-gray-700">Your Review <span className="text-red-500">*</span></label>
               <textarea id="comment" name="comment" value={comment} onChange={(e) => setComment(e.target.value)} rows={4} className="w-full rounded-md border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none" required minLength={10} maxLength={1000} placeholder="Share your thoughts..." />
